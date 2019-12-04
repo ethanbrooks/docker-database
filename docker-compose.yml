@@ -1,0 +1,101 @@
+version: '3.7'
+services:
+  server-1: &server
+    image: percona/percona-server:8.0
+#    build: ./mysql8/
+    ports:
+      - "30001:3306"
+      - "40001:33060"
+    command:
+      - "--server_id=1"
+    environment:
+      - MYSQL_ROOT_PASSWORD=secret
+      - MYSQL_ROOT_HOST
+    volumes:
+      - ./mysql8/my.cnf:/etc/my.cnf
+      - ./data/server-1:/var/lib/mysql
+    restart: always
+
+  server-2:
+    <<: *server
+    ports:
+      - "30002:3306"
+      - "40002:33060"
+    command:
+      - "--server_id=2"
+    volumes:
+      - ./mysql8/my.cnf:/etc/my.cnf
+      - ./data/server-2:/var/lib/mysql
+
+  server-3:
+    <<: *server
+    ports:
+      - "30003:3306"
+      - "40003:33060"
+    command:
+      - "--server_id=3"
+    volumes:
+      - ./mysql8/my.cnf:/etc/my.cnf
+      - ./data/server-3:/var/lib/mysql
+
+  shell:
+    image: percona/percona-server:8.0
+#    build: ./mysql8/
+    entrypoint: /bin/shell-entrypoint
+    environment: &other-environment
+      - MYSQL_USER
+      - MYSQL_PASSWORD
+      - MYSQL_HOST
+      - MYSQL_PORT
+      - MYSQL_CLUSTER_NAME
+      - MYSQL_CLUSTER_OPTIONS
+      - MYSQL_INNODB_NUM_MEMBERS
+    volumes:
+      - ./mysql8/shell-entrypoint.sh:/bin/shell-entrypoint
+      - ./mysql8/mysql.sh:/bin/mysqlsh
+      - ./.env:/.env
+    depends_on: &other-depends
+      - server-1
+      - server-2
+      - server-3
+
+  proxysql:
+    image: perconalab/proxysql:latest
+    build: ./proxysql/
+    ports:
+      - "6446:6446"
+      - "6447:6447"
+    environment: *other-environment
+    volumes:
+      - "./data/router:/var/lib/proxysql"
+    depends_on: *other-depends
+    restart: always
+
+  prometheus-exporter:
+    image: "prom/mysqld-exporter"
+    ports:
+      - "9104:9104"
+    environment:
+      DATA_SOURCE_NAME: "${MYSQL_USER}:${MYSQL_PASSWORD}@(${MYSQL_HOST}:${MYSQL_PORT})/"
+    depends_on: *other-depends
+    restart: always 
+
+  pmm-server:
+    image: percona/pmm-server:latest
+    ports:
+     - 443
+    environment:
+     - SERVER_USER=pmm
+     - SERVER_PASSWORD=pmm
+     
+  pmm-client-ps:
+    image: perconalab/pmm-client:latest
+    environment:
+     - PMM_SERVER=pmm-server:443
+     - PMM_USER=pmm
+     - PMM_PASSWORD=pmm
+     - DB_TYPE=mysql
+     - DB_HOST=percona-server
+     - DB_PORT=3306
+     - DB_USER=root
+     - DB_PASSWORD=secret
